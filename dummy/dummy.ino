@@ -67,6 +67,8 @@ void loop() {
     // Blink LED built-in
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 
+    // testing tambahan
+
     // Debug Serial
     Serial.printf("[DUMMY] Lat: %.6f | Lon: %.6f | L: %.2f | T: %.2f | HR: %d | SpO2: %.1f | E: %d\n",
                   lat, lon, tempL, tempT, heartRate, spo2, emergency);
