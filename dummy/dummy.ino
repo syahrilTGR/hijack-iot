@@ -56,8 +56,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LED_EMERGENCY, OUTPUT);
 
-  preferences.begin("wifi", false); // namespace "wifi"
-
+  preferences.begin("wifi", false);
   // Coba baca SSID & PASS dari Preferences
   wifiSSID = preferences.getString("ssid", "");
   wifiPASS = preferences.getString("pass", "");
