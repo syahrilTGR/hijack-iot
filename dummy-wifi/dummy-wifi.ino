@@ -11,6 +11,7 @@ Preferences preferences;
 // ===== Pin Definitions =====
 const int BUZZER_PIN = 2; // Ubah ke pin buzzer yang benar
 const int LED_BUILTIN = 2; // Menggunakan LED bawaan untuk simulasi
+const int EMERGENCY_BUTTON_PIN = 4; // Pin baru untuk tombol emergency
 
 // ===== WebSocket Server =====
 WebSocketsServer webSocket = WebSocketsServer(81);
@@ -26,9 +27,16 @@ int userAge = 0;
 String userGender = "unknown";
 bool userHijab = false;
 
+// ===== Button & State Variables =====
+volatile bool manualEmergency = false;
+volatile unsigned long emergencyStartTime = 0;
+const unsigned long emergencyDuration = 5000; // 5 detik
+unsigned long lastButtonPress = 0;
+const unsigned long debounceDelay = 50;
+
 // ===== Buzzer Control =====
 void updateBuzzerStatus(float temp) {
-  if (temp < 35.0) {
+  if (temp < 35.0 || manualEmergency) {
     digitalWrite(LED_BUILTIN, HIGH);
   } else {
     digitalWrite(LED_BUILTIN, LOW);
@@ -40,7 +48,6 @@ void createDummyJSON(char* buf, size_t len) {
   const double baseLat = -7.94621154560041;
   const double baseLon = 112.61544899535379;
 
-  // Geser ±100 meter random
   double deltaLat_m = ((double)random(-100, 101));
   double deltaLon_m = ((double)random(-100, 101));
 
@@ -49,17 +56,15 @@ void createDummyJSON(char* buf, size_t len) {
 
   float tempL = random(200, 300) / 10.0;
   float tempT = random(330, 380) / 10.0;
-  float originalTempT = tempT; // Simpan nilai asli
+  float originalTempT = tempT;
 
-  // Apply temperature offset if user wears hijab
   if (userHijab) {
-    tempT += 2.0; // Tambah 2 derajat Celsius
+    tempT += 2.0;
     Serial.printf("Suhu Asli (dengan hijab): %.1f C\n", originalTempT);
   }
 
-  bool emergency = (tempT < 35.0);
+  bool emergency = manualEmergency;
 
-  // Perbarui status buzzer di sini, sebelum JSON dibuat
   updateBuzzerStatus(tempT);
 
   snprintf(buf, len,
@@ -118,6 +123,13 @@ void webSocketTask(void *pvParameters) {
     if (wsStarted) {
       webSocket.loop();
     }
+    
+    // Logic untuk mengelola timer emergency
+    if (manualEmergency && (millis() - emergencyStartTime > emergencyDuration)) {
+      manualEmergency = false;
+      Serial.println("Manual emergency duration ended.");
+    }
+    
     if (wifiConnected && wsStarted) {
       static unsigned long lastSend = 0;
       if (millis() - lastSend > 2000) {
@@ -131,18 +143,29 @@ void webSocketTask(void *pvParameters) {
   }
 }
 
+// ===== Button Press ISR =====
+void IRAM_ATTR handleButtonPress() {
+  if (millis() - lastButtonPress > debounceDelay) {
+    manualEmergency = true;
+    emergencyStartTime = millis(); // Mencatat waktu awal
+    Serial.println("Manual emergency triggered!");
+    lastButtonPress = millis();
+  }
+}
+
 // ===== Setup =====
 void setup() {
   Serial.begin(115200);
   delay(100);
   BTSerial.begin("ESP32-RX-DUMMY");
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(EMERGENCY_BUTTON_PIN, INPUT_PULLUP); // Konfigurasi pin tombol dengan internal pull-up
+  attachInterrupt(digitalPinToInterrupt(EMERGENCY_BUTTON_PIN), handleButtonPress, FALLING); // Gunakan interrupt
   delay(200);
 
   Serial.println("=== Bluetooth ready for input ===");
   BTSerial.println("{\"info\":\"Ketik WIFI:SSID,PASS | USER:AGE,GENDER,HIJAB | GETIP | RESET\"}");
 
-  // Load preferences
   preferences.begin("data", false);
   wifiSSID = preferences.getString("ssid", "");
   wifiPASS = preferences.getString("pass", "");
@@ -162,7 +185,6 @@ void setup() {
     }
   }
 
-  // Start WebSocket task
   xTaskCreate(webSocketTask, "wsTask", 8192, NULL, 1, NULL);
 }
 
@@ -170,7 +192,6 @@ unsigned long lastWifiStatusSend = 0;
 
 // ===== Loop =====
 void loop() {
-  // Bluetooth input
   if (BTSerial.available()) {
     String cmd = BTSerial.readStringUntil('\n');
     cmd.trim();
