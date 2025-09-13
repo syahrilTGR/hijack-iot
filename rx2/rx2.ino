@@ -7,6 +7,10 @@
 #include <math.h>
 #include <ESPmDNS.h>
 
+// ===== LORA ADDRESSING =====
+#define MY_ADDRESS 3
+#define REPEATER_ADDRESS 2
+
 // ===== Pin Definitions =====
 const int BUZZER_PIN = 2;
 #define LORA_RX 16
@@ -38,57 +42,61 @@ float currentBodyTemp = 36.5;
 String lastCompleteJsonPayload = "";
 
 // ================== LoRa Functions ==================
-void sendAck() {
-  loraSerial.print("ACK\n");
-  Serial.println("[LoRa] ACK dibalas ke pengirim.");
+void sendAck(int destinationAddress) {
+  String ackMessage = String(destinationAddress) + "," + String(MY_ADDRESS) + ",ACK\n";
+  loraSerial.print(ackMessage);
+  Serial.printf("[LoRa] ACK dikirim ke Addr %d.\n", destinationAddress);
 }
 
-void handlePacket(const String &packet) {
-  Serial.printf("[LoRa] Paket JSON diterima: %s\n", packet.c_str());
+void handlePacket(const String &payload, int sourceAddress) {
+  Serial.printf("[LoRa] Paket diterima dari Addr %d: %s\n", sourceAddress, payload.c_str());
   
-  StaticJsonDocument<256> doc;
-  DeserializationError error = deserializeJson(doc, packet);
+  // Balas ACK ke pengirim (repeater)
+  sendAck(sourceAddress);
 
-  if (error) {
-    Serial.print("[LoRa] Gagal mem-parsing JSON: ");
-    Serial.println(error.c_str());
-    return;
+  // Parsing payload (format CSV)
+  float lat, lon, tempLingkungan, tempTubuh;
+  char timeStr[30];
+  char status[15] = "";
+  bool emergencyFlag = false;
+
+  int parsed = sscanf(payload.c_str(), "%f,%f,%f,%f,%29[^,],%14s",
+                      &lat, &lon, &tempLingkungan, &tempTubuh, timeStr, status);
+
+  if (parsed >= 5) {
+    if (parsed == 6 && String(status) == "EMERGENCY") {
+      emergencyFlag = true;
+      Serial.println("[LoRa] !!! SINYAL DARURAT DITERIMA DARI TX !!!");
+      lastEmergency = millis();
+    }
+
+    currentBodyTemp = tempTubuh;
+
+    // Siapkan JSON untuk dikirim ke WebSocket
+    StaticJsonDocument<384> outgoingDoc;
+    outgoingDoc["lat"] = lat;
+    outgoingDoc["lon"] = lon;
+    outgoingDoc["temp_lingkungan"] = tempLingkungan;
+    outgoingDoc["temp_tubuh"] = tempTubuh;
+    outgoingDoc["time"] = timeStr;
+    
+    bool isEmergencyActive = (millis() - lastEmergency < 10000) || currentBodyTemp < 35.0;
+    outgoingDoc["emergency"] = isEmergencyActive;
+
+    outgoingDoc["age"] = userAge;
+    outgoingDoc["gender"] = userGender;
+    outgoingDoc["hijab"] = userHijab;
+
+    char buffer[384];
+    serializeJson(outgoingDoc, buffer);
+
+    lastCompleteJsonPayload = String(buffer);
+    webSocket.broadcastTXT(lastCompleteJsonPayload);
+    Serial.printf("[WebSocket] Broadcast data: %s\n", buffer);
+
+  } else {
+    Serial.println("[LoRa] Format payload tidak valid.");
   }
-
-  float lat = doc["lat"];
-  float lon = doc["lon"];
-  float tempL = doc["temp_lingkungan"];
-  float tempT = doc["temp_tubuh"];
-  const char* timeStr = doc["time"];
-  bool emergency = doc["emergency"];
-
-  currentBodyTemp = tempT;
-
-  if (emergency) {
-    Serial.println("[LoRa] !!! SINYAL DARURAT DITERIMA DARI TX !!!");
-    lastEmergency = millis();
-  }
-
-  StaticJsonDocument<384> outgoingDoc;
-  outgoingDoc["lat"] = lat;
-  outgoingDoc["lon"] = lon;
-  outgoingDoc["temp_lingkungan"] = tempL;
-  outgoingDoc["temp_tubuh"] = tempT;
-  outgoingDoc["time"] = timeStr;
-  
-  bool isEmergencyActive = (millis() - lastEmergency < 10000) || currentBodyTemp < 35.0;
-  outgoingDoc["emergency"] = isEmergencyActive;
-
-  outgoingDoc["age"] = userAge;
-  outgoingDoc["gender"] = userGender;
-  outgoingDoc["hijab"] = userHijab;
-
-  char buffer[384];
-  serializeJson(outgoingDoc, buffer);
-
-  lastCompleteJsonPayload = String(buffer);
-  webSocket.broadcastTXT(lastCompleteJsonPayload);
-  Serial.printf("[WebSocket] Broadcast data: %s\n", buffer);
 }
 
 void updateSystemStatus() {
@@ -320,14 +328,29 @@ void loop() {
     char c = loraSerial.read();
     if (c == '\n') {
       if (loraBuffer.length() > 0) {
-        if (loraBuffer == "ACK") {
-          Serial.println("[LoRa] Terima ACK/ping dari TX");
-          lastAckRecv = millis();
-          sendAck();
+        
+        int destAddr, srcAddr;
+        char payload[200];
+
+        // Parsing format: DEST,SRC,PAYLOAD
+        int parsed = sscanf(loraBuffer.c_str(), "%d,%d,%199[^\n]", &destAddr, &srcAddr, payload);
+
+        if (parsed == 3 && destAddr == MY_ADDRESS) {
+          String payloadStr = String(payload);
+          if (payloadStr == "ACK") {
+            Serial.printf("[LoRa] Terima ACK/ping dari Addr %d\n", srcAddr);
+            lastAckRecv = millis();
+            // Balas ACK ke repeater
+            sendAck(srcAddr);
+          } else {
+            // Ini adalah paket data, proses isinya
+            handlePacket(payloadStr, srcAddr);
+          }
         } else {
-          handlePacket(loraBuffer);
+          // Bukan untuk alamat ini atau format salah
+          Serial.printf("[LoRa] Pesan diabaikan: %s\n", loraBuffer.c_str());
         }
-        loraBuffer = "";
+        loraBuffer = ""; // Kosongkan buffer
       }
     } else if (c != '\r') {
       loraBuffer += c;
