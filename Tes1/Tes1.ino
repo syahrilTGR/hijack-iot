@@ -3,9 +3,14 @@
 #include <TinyGPS++.h>
 #include <Adafruit_MLX90614.h>
 
+// ===== LORA ADDRESSING =====
+#define MY_ADDRESS 1
+#define REPEATER_ADDRESS 2
+
 #define DS18B20_PIN 4
 #define EMERGENCY_BTN 15
 #define BUZZER_PIN 25
+#define HEATER_PIN 23   // MOSFET control untuk heating pad
 
 #define GPS_RX 16
 #define GPS_TX 17
@@ -41,6 +46,14 @@ bool buzzerActive = false;
 uint32_t buzzerStartTime = 0;
 const uint32_t BUZZER_DURATION = 1000; // 1 detik
 
+// --- variabel heating pad ---
+bool heaterActive = false;            // untuk mode darurat
+uint32_t heaterStartTime = 0;
+const uint32_t HEATER_DURATION = 5000; // 5 detik nyala (darurat)
+
+// --- variabel heater otomatis ---
+bool heaterAuto = false;
+
 String buildLocalTime() {
   if (!gps.location.isValid() || gps.date.year() < 2020)
     return "0000-00-00 00:00:00";
@@ -65,6 +78,7 @@ String buildLocalTime() {
 
 void sendPacket(float tempLingkungan, float tempTubuh, bool emergency = false) {
   String payload;
+  String header = String(REPEATER_ADDRESS) + "," + String(MY_ADDRESS) + ",";
 
   if (gps.location.isValid() && gps.date.year() >= 2020) {
     payload = String(gps.location.lat(), 6) + "," +
@@ -80,15 +94,16 @@ void sendPacket(float tempLingkungan, float tempTubuh, bool emergency = false) {
 
   if (emergency) payload += ",EMERGENCY";
 
-  payload += "\n";
-  loraSerial.print(payload);
+  String fullMessage = header + payload + "\n";
+  loraSerial.print(fullMessage);
   Serial.print("Kirim Data: ");
-  Serial.print(payload);
+  Serial.print(fullMessage);
 }
 
 void sendAckPing() {
-  loraSerial.print("ACK\n");
-  Serial.println("[TX] ACK dikirim ke RX");
+  String pingMessage = String(REPEATER_ADDRESS) + "," + String(MY_ADDRESS) + ",ACK\n";
+  loraSerial.print(pingMessage);
+  Serial.println("[TX] ACK/Ping dikirim ke Repeater");
 }
 
 void handleIncoming() {
@@ -96,9 +111,14 @@ void handleIncoming() {
   while (loraSerial.available()) {
     char c = loraSerial.read();
     if (c == '\n') {
-      if (buffer == "ACK") {
+      // Format pesan: DEST,SRC,PAYLOAD
+      int destAddr, srcAddr;
+      char payload[20];
+      sscanf(buffer.c_str(), "%d,%d,%19s", &destAddr, &srcAddr, payload);
+
+      if (destAddr == MY_ADDRESS && String(payload) == "ACK") {
         lastAckTime = millis();
-        Serial.println("[TX] ACK diterima dari RX");
+        Serial.printf("[TX] ACK diterima dari Addr %d\n", srcAddr);
       }
       buffer = "";
     } else if (c != '\r') {
@@ -129,6 +149,20 @@ void updateBuzzer() {
   }
 }
 
+void updateHeater() {
+  // Mode darurat (nyala 5 detik)
+  if (heaterActive && millis() - heaterStartTime >= HEATER_DURATION) {
+    digitalWrite(HEATER_PIN, LOW);
+    heaterActive = false;
+    Serial.println("[HEATER] Dimatikan otomatis (darurat selesai)");
+  }
+
+  // Mode otomatis: ON terus bila suhu tubuh < 35
+  if (heaterAuto) {
+    digitalWrite(HEATER_PIN, HIGH);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   ds18b20.begin();
@@ -147,6 +181,9 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
+  pinMode(HEATER_PIN, OUTPUT);
+  digitalWrite(HEATER_PIN, LOW);
+
   Serial.println("=== NODE PENDAKI READY (TX) ===");
 }
 
@@ -163,15 +200,37 @@ void loop() {
     lastDebug = millis();
   }
 
+  // === Heater otomatis berdasarkan suhu tubuh ===
+  if (tempTubuh < 35.0) {
+    if (!heaterAuto) {
+      Serial.println("[HEATER] Otomatis ON (suhu tubuh < 35)");
+      heaterAuto = true;
+    }
+  } else {
+    if (heaterAuto) {
+      Serial.println("[HEATER] Otomatis OFF (suhu tubuh >= 35)");
+      heaterAuto = false;
+      // pastikan mati jika tidak ada darurat aktif
+      if (!heaterActive) digitalWrite(HEATER_PIN, LOW);
+    }
+  }
+
+  // === Tombol darurat ===
   bool buttonState = digitalRead(EMERGENCY_BTN);
   if (lastButtonState == HIGH && buttonState == LOW) {
     Serial.println("!!! TOMBOL DARURAT DITEKAN !!!");
     sendPacket(tempLingkungan, tempTubuh, true);
 
-    // Aktifkan buzzer non-blocking
+    // Aktifkan buzzer
     digitalWrite(BUZZER_PIN, HIGH);
     buzzerActive = true;
     buzzerStartTime = millis();
+
+    // Aktifkan heater 5 detik (mode darurat)
+    digitalWrite(HEATER_PIN, HIGH);
+    heaterActive = true;
+    heaterStartTime = millis();
+    Serial.println("[HEATER] Dinyalakan 5 detik (darurat)");
   }
   lastButtonState = buttonState;
 
@@ -188,4 +247,5 @@ void loop() {
   handleIncoming();
   updateLED();
   updateBuzzer();
+  updateHeater();
 }

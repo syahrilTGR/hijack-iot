@@ -1,52 +1,92 @@
-# Arduino Code Project: hijack-iot
+# Hiker Tracking and Safety System based on LoRa
 
-A collection of Arduino codes for various purposes related to monitoring and data communication. This project is part of or related to [ESP32_Monitor on GitHub](https://github.com/syahrilTGR/ESP32_Monitor).
+This project contains a collection of Arduino code (for the ESP32 platform) that builds a system to wirelessly monitor a hiker's location, temperature conditions, and emergency status using LoRa communication.
 
-## Sketch Descriptions
+This repository is also related to the monitoring application, which can be found here: [https://github.com/syahrilTGR/ESP32_Monitor](https://github.com/syahrilTGR/ESP32_Monitor)
 
-The following is an explanation for each sketch (.ino) in this repository:
+## System Architecture
 
-### `/dummy/dummy.ino`
+The system consists of three main components:
 
-A sketch for a "dummy" receiver (RX) device. This code does not use a real LoRa module, but instead sends fake (dummy) JSON data via Bluetooth Serial. This sketch can also receive WiFi credential configuration (SSID & Password) via Bluetooth commands to then try to connect to a WiFi network.
+1.  **Sender Node (TX):** The device carried by the hiker. It is responsible for reading sensor data and transmitting it periodically.
+2.  **Repeater Node:** A device placed between the TX and RX to extend the range of the LoRa signal.
+3.  **Receiver Node (RX):** The device at the monitoring post that receives, processes, and displays data from the hiker.
 
-### `/dummy-wifi/dummy-wifi.ino`
+---
 
-This sketch turns the ESP32 into a standalone device connected to WiFi.
-*   **Configuration Mode:** If no WiFi credentials are saved, the ESP32 will create an Access Point (AP) named "ESP32_Config". Users can connect to this AP and send WiFi credentials via HTTP POST.
-*   **Connected Mode:** After connecting to WiFi, the device will run a WebSocket server. This server periodically sends dummy sensor data (location, temperature, etc.) in JSON format to all connected clients.
-*   **Additional Features:** It has a physical emergency button and can receive user data updates (age, gender, etc.) from clients via WebSocket.
+## Directory & Code Structure
 
-### `/GPS/GPS.ino`
+Here is an explanation for each directory and the `.ino` file within it.
 
-A simple sketch to test a GPS module. This code reads data from a GPS module connected to `Serial2` (pins RX 16, TX 17) and displays it on the Serial Monitor, including latitude, longitude, speed, altitude, and time.
+### Sender Node (Transmitter/TX)
 
-### `/RX/RX.ino`
+The device carried by the hiker. There are several versions with different functionalities.
 
-The sketch for the main receiver (RX) device or "Guard Post". This code receives sensor data sent via a LoRa module, parses the data (coordinates, temperature, time, emergency status), and displays it on the Serial Monitor. This sketch also implements an acknowledgment (ACK) system to ensure data is received.
+-   `TX/`
+    *   **Initial Version.** Reads temperature sensors (DS18B20 & MLX90614) and GPS, then sends the data via LoRa.
 
-### `/rx2/rx2.ino`
+-   `Tes1/`
+    *   **Version with Actuators.** An enhancement of `TX/`, with the addition of a **Buzzer** and a **Heating Pad** controlled by on/off signals.
 
-A comprehensive receiver sketch that receives LoRa data in JSON format. It forwards the data to a WebSocket for real-time monitoring. If not connected to WiFi, it creates a configuration portal to set up WiFi credentials. It also manages user data (age, gender, hijab) and triggers a buzzer in emergency situations (based on LoRa signal or low body temperature).
+-   `tx2/`
+    *   **Dummy LoRa Version.** Sends dummy JSON data via LoRa. Useful for testing the LoRa communication chain (TX -> Repeater -> RX) without needing physical sensors.
 
-### `/Tes1/Tes1.ino`
+-   `tesHeating_withDummy/`
+    *   **Full App Test Version.** A combination of `Tes1/` and `tx2/`. Sends **dummy** sensor data via LoRa, but has full functionality for **heater control via PWM (using `analogWrite`) through Bluetooth**. Ideal for comprehensive mobile app development.
 
-A variant of the `TX/TX.ino` sketch. It has the same functionality with the addition of a **buzzer**. The buzzer will sound when the emergency button is pressed as an audio indicator.
+-   `Tes_Heating_PWM/`
+    *   **Heater Test Version.** Minimalist code containing only the **heater control function via PWM (using `analogWrite`) through Bluetooth**. Created specifically to test the UI component (slider) in the application in isolation.
 
-### `/tes2/tes2.ino`
+### Receiver Node (Receiver/RX)
 
-A variant of the `RX/RX.ino` sketch. In addition to receiving and parsing data from LoRa, this sketch also forwards the received data to another device (like a smartphone or laptop) in JSON format via **Bluetooth Serial**. This allows the data to be directly processed or displayed in other applications.
+The device located at the monitoring post.
 
-### `/TX/TX.ino`
+-   `RX/`
+    *   **Basic Receiver.** Receives LoRa data and displays it on the Serial Monitor.
 
-The sketch for the transmitter (TX) device or "Hiker Node". This code is responsible for:
-1.  Reading data from various sensors:
-    *   **DS18B20:** Ambient temperature.
-    *   **MLX90614:** Non-contact body temperature.
-    *   **GPS:** Location (latitude and longitude) and time.
-2.  Sending formatted data packets via a LoRa module periodically.
-3.  It has an emergency button to send a priority signal.
+-   `tes2/`
+    *   **Receiver via Bluetooth.** A variant of `RX/` that forwards the received data to an application (e.g., a smartphone) in JSON format via Bluetooth Serial.
 
-### `/tx2/tx2.ino`
+-   `rx2/`
+    *   **Main Receiver (Web Dashboard).** The most advanced version. Receives LoRa data, then serves it through a **WebSocket Server**. It now includes a **blinking LED indicator** for successful data reception and can receive data **directly from the Sender** (TX) in addition to receiving from the Repeater. The `BUZZER_PIN` has been moved to avoid conflict with the LED. It has a WiFi configuration portal if credentials are not yet saved.
 
-A transmitter sketch that sends dummy JSON data via LoRa for testing purposes. It simulates sensor readings for location, temperature, and time. It includes a physical emergency button that, when pressed, sets an emergency flag in the transmitted data.
+### Network Infrastructure
+
+-   `repeater/`
+    *   Acts as a bridge. Receives LoRa messages from the TX, then forwards them to the RX (and vice versa for ACK messages) to extend the range. The LoRa module's M0 and M1 pins are **hardwired to GND** for transparent mode operation.
+
+### Testing & Prototyping Code
+
+-   `GPS/`
+    *   Simple code to verify the functionality of the GPS module.
+
+-   `dummy/`
+    *   Simulates a Receiver Node (RX) that sends dummy data via Bluetooth. Useful for the initial stages of mobile app development.
+
+-   `dummy-wifi/`
+    *   **Standalone Server (UI Dev).** Very useful code for frontend/dashboard development. The ESP32 will become a standalone server that provides dummy sensor data via WebSocket without needing a TX or Repeater node at all.
+
+---
+
+## LoRa Communication Flow
+
+This project uses a simple addressing scheme to ensure data reaches the correct destination through the repeater.
+
+1.  **TX (Address 1)** sends a message to the **Repeater (Address 2)**.
+2.  **Repeater (Address 2)** receives the message, then forwards it to the **RX (Address 3)**.
+3.  **RX (Address 3)** replies with an `ACK` to the **Repeater (Address 2)**.
+4.  **Repeater (Address 2)** forwards the `ACK` to the **TX (Address 1)**.
+5.  **New:** **RX (Address 3)** can also directly receive messages from **TX (Address 1)** if it is within range, providing a more robust communication link.
+
+---
+
+## Development & Testing Guide
+
+-   **For Mobile App Testing (Heater & Data Features):**
+    *   Use `tesHeating_withDummy/tesHeating_withDummy.ino`. This provides heater control functionality (using `analogWrite`) and LoRa data transmission (dummy) simultaneously.
+
+-   **For Web Dashboard UI Testing:**
+    *   Use `dummy-wifi/dummy-wifi.ino`. With just this one ESP32, you can focus on developing the frontend display without thinking about other hardware.
+
+-   **For LoRa Communication Chain Testing:**
+    *   Use `tx2/` (sender), `repeater/` (repeater), and `rx2/` (receiver) to validate the end-to-end data flow.
