@@ -4,11 +4,6 @@
 #define HEATER_PIN 23
 #define LED_BUILTIN 2 // LED untuk indikator status
 
-// Konfigurasi PWM untuk Heater
-const int PWM_CHANNEL = 0;
-const int PWM_FREQ = 5000;
-const int PWM_RESOLUTION = 8; // Resolusi 8-bit (0-255)
-
 // Objek Bluetooth Serial
 BluetoothSerial BTSerial;
 
@@ -24,7 +19,7 @@ void setHeaterPower(int percentage) {
   int dutyCycle = map(heaterPowerPercentage, 0, 100, 0, 255);
   
   // Atur duty cycle PWM
-  ledcWrite(PWM_CHANNEL, dutyCycle);
+  analogWrite(HEATER_PIN, dutyCycle);
   
   // Beri indikasi visual di LED Built-in
   if (dutyCycle > 0) {
@@ -75,9 +70,8 @@ void setup() {
   // Konfigurasi pin LED
   pinMode(LED_BUILTIN, OUTPUT);
 
-  // Konfigurasi PWM untuk pin pemanas
-  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttachPin(HEATER_PIN, PWM_CHANNEL);
+  // Konfigurasi pin pemanas sebagai output
+  pinMode(HEATER_PIN, OUTPUT);
   
   // Matikan pemanas saat pertama kali dinyalakan
   setHeaterPower(0); 
