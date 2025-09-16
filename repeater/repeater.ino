@@ -1,9 +1,11 @@
 #include <Arduino.h>
 
 // ===== PIN DEFINITIONS =====
-#define LORA_RX 16
-#define LORA_TX 17
+#define LORA_RX 26
+#define LORA_TX 27
 #define LORA_BAUD 9600
+#define M0 14
+#define M1 12
 // Pin M0 & M1 di-hardwire ke Ground untuk Mode 0 (Transparan)
 #define LED_BUILTIN 2
 
@@ -17,6 +19,10 @@ HardwareSerial loraSerial(2);
 void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(M0, OUTPUT);
+  pinMode(M1, OUTPUT);
+  digitalWrite(M0, LOW);
+  digitalWrite(M1, LOW);
   // Pin M0 & M1 diasumsikan terhubung ke Ground untuk Mode 0 (Transparan)
   
   loraSerial.begin(LORA_BAUD, SERIAL_8N1, LORA_RX, LORA_TX);
