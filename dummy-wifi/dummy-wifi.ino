@@ -16,15 +16,14 @@ const int EMERGENCY_BUTTON_PIN = 4;
 String wifiSSID = "";
 String wifiPASS = "";
 bool wifiConnected = false;
-int userAge = 0;
-String userGender = "unknown";
-bool userHijab = false;
+String userNIK = "3523072655550012";
 Preferences preferences;
 volatile bool manualEmergency = false;
 volatile unsigned long emergencyStartTime = 0;
 const unsigned long emergencyDuration = 5000;
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 50;
+float manualTemp = 0.0;
 
 void updateBuzzerStatus(float temp) {
   if (temp < 35.0 || manualEmergency) {
@@ -42,13 +41,12 @@ void createDummyJSON(char* buf, size_t len) {
   double lat = baseLat + (deltaLat_m / 111139.0);
   double lon = baseLon + (deltaLon_m / (111320.0 * cos(baseLat * DEG_TO_RAD)));
   float tempL = random(200, 300) / 10.0;
-  float tempT = random(330, 380) / 10.0;
-  if (userHijab) { tempT += 2.0; }
+  float tempT = manualTemp;
   bool emergency = manualEmergency;
   updateBuzzerStatus(tempT);
   snprintf(buf, len,
-           "{\"lat\":%.6f,\"lon\":%.6f,\"temp_lingkungan\":%.1f,\"temp_tubuh\":%.1f,\"time\":\"2025-07-26 16:00:00\",\"emergency\":%s,\"age\":%d,\"gender\":\"%s\",\"hijab\":%s}",
-           lat, lon, tempL, tempT, emergency ? "true" : "false", userAge, userGender.c_str(), userHijab ? "true" : "false");
+           "{\"lat\":%.6f,\"lon\":%.6f,\"temp_lingkungan\":%.1f,\"temp_tubuh\":%.1f,\"time\":\"2025-07-26 16:00:00\",\"emergency\":%s,\"nik\":\"%s\"}",
+           lat, lon, tempL, tempT, emergency ? "true" : "false", userNIK.c_str());
 }
 
 void onWebSocketEvent(uint8_t clientNum, WStype_t type, uint8_t * payload, size_t length) {
@@ -70,15 +68,11 @@ void onWebSocketEvent(uint8_t clientNum, WStype_t type, uint8_t * payload, size_
       const char* command = doc["command"];
       if (command && strcmp(command, "update_user") == 0) {
         Serial.println("Received user data update from app.");
-        userAge = doc["age"] | userAge;
-        userGender = doc["gender"] | userGender;
-        userHijab = doc["hijab"] | userHijab;
+        userNIK = doc["nik"] | userNIK;
         preferences.begin("data", false);
-        preferences.putInt("age", userAge);
-        preferences.putString("gender", userGender);
-        preferences.putBool("hijab", userHijab);
+        preferences.putString("nik", userNIK);
         preferences.end();
-        Serial.printf("User data updated: Age=%d, Gender=%s, Hijab=%s\n", userAge, userGender.c_str(), userHijab ? "true" : "false");
+        Serial.printf("User data updated: NIK=%s\n", userNIK.c_str());
         webSocket.sendTXT(clientNum, "{\"status\":\"user_update_success\"}");
       }
       break;
@@ -101,10 +95,8 @@ void handleWifiConfig() {
     preferences.begin("data", false);
     preferences.putString("ssid", ssid);
     preferences.putString("pass", password);
-    if(!preferences.isKey("age")){
-        preferences.putInt("age", 0);
-        preferences.putString("gender", "unknown");
-        preferences.putBool("hijab", false);
+    if(!preferences.isKey("nik")){
+        preferences.putString("nik", "unknown");
     }
     preferences.end();
     Serial.printf("Received new WiFi credentials: %s\n", ssid);
@@ -137,7 +129,7 @@ void connectToWiFi(const char* ssid, const char* pass) {
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-    if (!MDNS.begin("esp32-monitor")) { Serial.println("Error setting up MDNS responder!"); }
+    if (!MDNS.begin("esp32-monitor")) { Serial.println("Error setting up MDNS responder!"); } 
     else {
       Serial.println("mDNS responder started. Hostname: esp32-monitor.local");
       MDNS.addService("ws", "tcp", 81);
@@ -162,6 +154,7 @@ void webSocketTask(void *pvParameters) {
         lastSend = millis();
         createDummyJSON(buf, sizeof(buf));
         webSocket.broadcastTXT(buf);
+        Serial.println(buf);
       }
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -188,9 +181,7 @@ void setup() {
   preferences.begin("data", true);
   wifiSSID = preferences.getString("ssid", "");
   wifiPASS = preferences.getString("pass", "");
-  userAge = preferences.getInt("age", 0);
-  userGender = preferences.getString("gender", "unknown");
-  userHijab = preferences.getBool("hijab", false);
+  userNIK = preferences.getString("nik", "unknown");
   preferences.end();
   
   if (wifiSSID.length() > 0 && wifiPASS.length() > 0) {
@@ -221,7 +212,7 @@ void setup() {
 void loop() {
   // Cek perintah dari Serial Monitor
   if (Serial.available() > 0) {
-    String command = Serial.readStringUntil('\\n');
+    String command = Serial.readStringUntil('\n');
     command.trim();
     if (command == "clear_prefs") {
       Serial.println("Perintah diterima. Menghapus data preferences...");
@@ -231,6 +222,25 @@ void loop() {
       Serial.println("Preferences dihapus. Me-restart perangkat.");
       delay(100);
       ESP.restart();
+    } else if (command.startsWith("set_nik:")) {
+      String newNik = command.substring(8);
+      if (newNik.length() > 0) {
+        userNIK = newNik;
+        preferences.begin("data", false);
+        preferences.putString("nik", userNIK);
+        preferences.end();
+        Serial.print("NIK diatur ke: ");
+        Serial.println(userNIK);
+      } else {
+        Serial.println("NIK tidak valid.");
+      }
+    } else {
+      float temp = command.toFloat();
+      if (temp > 0.0) {
+        manualTemp = temp;
+        Serial.print("Suhu tubuh diatur ke: ");
+        Serial.println(manualTemp);
+      }
     }
   }
 
