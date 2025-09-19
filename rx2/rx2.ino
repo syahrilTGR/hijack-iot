@@ -40,6 +40,7 @@ String userGender = "unknown";
 bool userHijab = false;
 Preferences preferences;
 float currentBodyTemp = 36.5;
+String lastNikReceived = "0";
 String lastCompleteJsonPayload = "";
 
 // ================== LoRa Functions ==================
@@ -50,37 +51,55 @@ void sendAck(int destinationAddress) {
 }
 
 void handlePacket(const String &payload, int sourceAddress) {
-  Serial.printf("[LoRa] Paket diterima dari Addr %d: %s\n", sourceAddress, payload.c_str());
+  Serial.printf("[LoRa] Paket DATA diterima dari Addr %d: %s\n", sourceAddress, payload.c_str());
   lastAckRecv = millis();
   
-  // Balas ACK ke pengirim (repeater atau tx langsung)
   sendAck(sourceAddress);
 
-  // Parsing payload (format CSV)
+  // Flexible CSV Parsing
   float lat, lon, tempLingkungan, tempTubuh;
-  char timeStr[30];
-  char status[15] = "";
+  String timeStr, nik, status;
   bool emergencyFlag = false;
 
-  int parsed = sscanf(payload.c_str(), "%f,%f,%f,%f,%29[^,],%14s",
-                      &lat, &lon, &tempLingkungan, &tempTubuh, timeStr, status);
+  String parts[8];
+  int partCount = 0;
+  int lastIndex = 0;
+  for (int i = 0; i < payload.length(); i++) {
+    if (payload.charAt(i) == ',') {
+      if (partCount < 7) { // Prevent overflow
+        parts[partCount++] = payload.substring(lastIndex, i);
+        lastIndex = i + 1;
+      }
+    }
+  }
+  parts[partCount++] = payload.substring(lastIndex);
 
-  if (parsed >= 5) {
-    if (parsed == 6 && String(status) == "EMERGENCY") {
+  if (partCount >= 6) { // Must have at least LAT,LON,T_ENV,T_BODY,TIME,NIK
+    lat = parts[0].toFloat();
+    lon = parts[1].toFloat();
+    tempLingkungan = parts[2].toFloat();
+    tempTubuh = parts[3].toFloat();
+    timeStr = parts[4];
+    nik = parts[5];
+    lastNikReceived = nik;
+
+    if (partCount > 6 && parts[6] == "EMERGENCY") {
       emergencyFlag = true;
       Serial.println("[LoRa] !!! SINYAL DARURAT DITERIMA DARI TX !!!");
       lastEmergency = millis();
     }
 
     currentBodyTemp = tempTubuh;
+    Serial.printf("[LoRa] NIK Diterima: %s\n", nik.c_str());
 
-    // Siapkan JSON untuk dikirim ke WebSocket
-    StaticJsonDocument<384> outgoingDoc;
+    // Prepare JSON for WebSocket
+    StaticJsonDocument<512> outgoingDoc;
     outgoingDoc["lat"] = lat;
     outgoingDoc["lon"] = lon;
     outgoingDoc["temp_lingkungan"] = tempLingkungan;
     outgoingDoc["temp_tubuh"] = tempTubuh;
     outgoingDoc["time"] = timeStr;
+    outgoingDoc["nik"] = nik;
     
     bool isEmergencyActive = (millis() - lastEmergency < 10000) || currentBodyTemp < 35.0;
     outgoingDoc["emergency"] = isEmergencyActive;
@@ -89,7 +108,7 @@ void handlePacket(const String &payload, int sourceAddress) {
     outgoingDoc["gender"] = userGender;
     outgoingDoc["hijab"] = userHijab;
 
-    char buffer[384];
+    char buffer[512];
     serializeJson(outgoingDoc, buffer);
 
     lastCompleteJsonPayload = String(buffer);
@@ -97,7 +116,7 @@ void handlePacket(const String &payload, int sourceAddress) {
     Serial.printf("[WebSocket] Broadcast data: %s\n", buffer);
 
   } else {
-    Serial.println("[LoRa] Format payload tidak valid.");
+    Serial.println("[LoRa] Format payload data tidak valid.");
   }
 }
 
@@ -105,7 +124,7 @@ void updateSystemStatus() {
   static uint32_t lastToggle = 0;
   static bool ledState = false;
 
-  // LED indikator LoRa
+  // LED indicator for LoRa activity
   if (millis() - lastAckRecv < 4000) {
     if (millis() - lastToggle >= 1000) {
       ledState = !ledState;
@@ -116,7 +135,7 @@ void updateSystemStatus() {
     digitalWrite(LED_BUILTIN, LOW);
   }
 
-  // Buzzer darurat
+  // Emergency buzzer
   bool isEmergencyActive = (millis() - lastEmergency < 10000) || currentBodyTemp < 35.0;
   if (isEmergencyActive) {
     digitalWrite(BUZZER_PIN, HIGH);
@@ -334,32 +353,34 @@ void loop() {
         int destAddr, srcAddr;
         char payload[200];
 
-        // Parsing format: DEST,SRC,PAYLOAD
-        int parsed = sscanf(loraBuffer.c_str(), "%d,%d,%199[^\\n]", &destAddr, &srcAddr, payload);
+        int parsed = sscanf(loraBuffer.c_str(), "%d,%d,%199[^\n]", &destAddr, &srcAddr, payload);
 
-        if (parsed == 3 && (destAddr == MY_ADDRESS || srcAddr == TX_ADDRESS)) {
+        if (parsed == 3 && (destAddr == MY_ADDRESS || destAddr == REPEATER_ADDRESS)) {
           String payloadStr = String(payload);
-          if (payloadStr == "ACK") {
-            // Jika ACK dari Repeater (balasan untuk data kita atau ping yg diteruskan)
+
+          if (payloadStr.startsWith("ACK")) {
+            int commaIndex = payloadStr.indexOf(',');
+            if (commaIndex != -1) {
+              lastNikReceived = payloadStr.substring(commaIndex + 1);
+              Serial.printf("[LoRa] NIK %s dari PING.\n", lastNikReceived.c_str());
+            }
+            
             if (srcAddr == REPEATER_ADDRESS) {
-                Serial.printf("[LoRa] Terima ACK/ping dari Repeater (Addr %d)\n", srcAddr);
+                Serial.printf("[LoRa] Terima ACK dari Repeater (Addr %d)\n", srcAddr);
+                lastAckRecv = millis();
+            } 
+            else if (srcAddr == TX_ADDRESS) {
+                Serial.printf("[LoRa] Dengar PING langsung dari Pengirim (Addr %d)\n", srcAddr);
                 lastAckRecv = millis();
                 sendAck(srcAddr);
-            } 
-            // Jika "menguping" ping asli dari TX ke Repeater
-            else if (srcAddr == TX_ADDRESS) {
-                Serial.printf("[LoRa] Dengar ping langsung dari Pengirim (Addr %d)\n", srcAddr);
-                // Tidak melakukan apa-apa, hanya logging untuk debug.
             }
           } else {
-            // Ini adalah paket data, proses isinya
             handlePacket(payloadStr, srcAddr);
           }
         } else {
-          // Bukan untuk alamat ini atau format salah
           Serial.printf("[LoRa] Pesan diabaikan: %s\n", loraBuffer.c_str());
         }
-        loraBuffer = ""; // Kosongkan buffer
+        loraBuffer = "";
       }
     } else if (c != '\r') {
       loraBuffer += c;

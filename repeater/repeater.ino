@@ -6,12 +6,11 @@
 #define LORA_BAUD 9600
 #define M0 14
 #define M1 12
-// Pin M0 & M1 di-hardwire ke Ground untuk Mode 0 (Transparan)
 #define LED_BUILTIN 2
 
 // ===== LORA ADDRESSING =====
 #define MY_ADDRESS 2       // Alamat untuk Repeater
-#define TX_ADDRESS 1       // Alamat untuk node Pengirim (Tes1)
+#define TX_ADDRESS 1       // Alamat untuk node Pengirim (tx2)
 #define RX_ADDRESS 3       // Alamat untuk node Penerima (rx2)
 
 HardwareSerial loraSerial(2);
@@ -23,7 +22,6 @@ void setup() {
   pinMode(M1, OUTPUT);
   digitalWrite(M0, LOW);
   digitalWrite(M1, LOW);
-  // Pin M0 & M1 diasumsikan terhubung ke Ground untuk Mode 0 (Transparan)
   
   loraSerial.begin(LORA_BAUD, SERIAL_8N1, LORA_RX, LORA_TX);
   
@@ -43,50 +41,45 @@ void loop() {
         int destAddr, srcAddr;
         char payload[150];
 
-        // Parsing format: DEST,SRC,PAYLOAD
         int parsed = sscanf(loraBuffer.c_str(), "%d,%d,%149[^\n]", &destAddr, &srcAddr, payload);
 
         if (parsed == 3 && destAddr == MY_ADDRESS) {
-          digitalWrite(LED_BUILTIN, HIGH); // Nyalakan LED saat bekerja
+          digitalWrite(LED_BUILTIN, HIGH);
           
           String payloadStr = String(payload);
           
-          // Tentukan tujuan selanjutnya
           int nextDestAddr;
           if (srcAddr == TX_ADDRESS) {
-            // Jika pesan dari TX, teruskan ke RX
             nextDestAddr = RX_ADDRESS;
             Serial.printf("Meneruskan pesan dari TX (Addr %d) ke RX (Addr %d)...\n", srcAddr, nextDestAddr);
           } else if (srcAddr == RX_ADDRESS) {
-            // Jika pesan (kemungkinan ACK) dari RX, teruskan ke TX
             nextDestAddr = TX_ADDRESS;
             Serial.printf("Meneruskan ACK dari RX (Addr %d) ke TX (Addr %d)...\n", srcAddr, nextDestAddr);
           } else {
             Serial.println("Sumber tidak diketahui, pesan diabaikan.");
             loraBuffer = "";
             digitalWrite(LED_BUILTIN, LOW);
-            return; // Keluar dari blok if
+            return;
           }
 
-          // Buat pesan baru untuk diteruskan
           String forwardMessage = String(nextDestAddr) + "," + String(MY_ADDRESS) + "," + payloadStr + "\n";
           
-          // Kirim pesan yang sudah di-format ulang
+          delay(300); // Delay before forwarding to allow direct communication
           loraSerial.print(forwardMessage);
           Serial.printf("Pesan diteruskan: %s", forwardMessage.c_str());
           
-          delay(50); // Beri jeda singkat
-          digitalWrite(LED_BUILTIN, LOW); // Matikan LED setelah selesai
+          delay(50);
+          digitalWrite(LED_BUILTIN, LOW);
 
         } else {
           Serial.println("Pesan bukan untuk saya atau format salah.");
         }
-        loraBuffer = ""; // Kosongkan buffer
+        loraBuffer = "";
       }
     } else if (c != '\r') {
       loraBuffer += c;
       if (loraBuffer.length() > 200) {
-        loraBuffer = ""; // Hindari buffer overflow
+        loraBuffer = "";
       }
     }
   }
