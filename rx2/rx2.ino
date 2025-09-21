@@ -101,7 +101,7 @@ void handlePacket(const String &payload, int sourceAddress) {
     outgoingDoc["time"] = timeStr;
     outgoingDoc["nik"] = nik;
     
-    bool isEmergencyActive = (millis() - lastEmergency < 10000) || currentBodyTemp < 35.0;
+    bool isEmergencyActive = (millis() - lastEmergency < 10000);
     outgoingDoc["emergency"] = isEmergencyActive;
 
     outgoingDoc["age"] = userAge;
@@ -136,7 +136,7 @@ void updateSystemStatus() {
   }
 
   // Emergency buzzer
-  bool isEmergencyActive = (millis() - lastEmergency < 10000) || currentBodyTemp < 35.0;
+  bool isEmergencyActive = (millis() - lastEmergency < 10000);
   if (isEmergencyActive) {
     digitalWrite(BUZZER_PIN, HIGH);
   } else {

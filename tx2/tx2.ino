@@ -339,6 +339,14 @@ void handleAppInput() {
       }
       return;
     }
+
+    if (input == "RESET") {
+      BTSerial.println("{\"status\":\"OK\",\"message\":\"ESP32 restarting...\"}");
+      Serial.println("[BT_IN] RESET command received. Restarting...");
+      delay(1000); // Give BT serial time to send the message
+      ESP.restart();
+      return;
+    }
     
     if (input.startsWith("P")) {
       if (currentStatus != SEVERE) {
@@ -514,14 +522,18 @@ void loop() {
   }
 
   // --- Send data periodically ---
-  if (millis() - lastLoraSend >= LORA_SEND_INTERVAL) {
-    sendLoraPacket();
-    lastLoraSend = millis();
+  // Only send LoRa data if GPS is fixed
+  if (gps.location.isValid() && gps.date.year() >= 2020) {
+    if (millis() - lastLoraSend >= LORA_SEND_INTERVAL) {
+      sendLoraPacket();
+      lastLoraSend = millis();
+    }
+    if (millis() - lastLoraPing >= LORA_PING_INTERVAL) {
+      sendLoraAckPing();
+      lastLoraPing = millis();
+    }
   }
-  if (millis() - lastLoraPing >= LORA_PING_INTERVAL) {
-    sendLoraAckPing();
-    lastLoraPing = millis();
-  }
+  
   if (millis() - lastBtSendTime >= BT_SEND_INTERVAL_MS) {
     sendDataToApp();
     lastBtSendTime = millis();
